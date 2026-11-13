@@ -16,6 +16,8 @@ DEFAULTS = {
     "large_mb": 100,                # the Large files page shows files at least this big
     "drives": [],                   # drives ticked for the scan; empty = every fixed drive
     "delete_mode": "recycle",       # recycle or permanent: the choice last used in Review
+    "auto_update": True,            # look for a new version on GitHub a few seconds after starting
+    "update_pending": "",           # the version an update was started for (to say if it didn't finish)
 }
 
 

@@ -141,8 +141,9 @@ class OverviewPage(Page):
             SAFE, "Safe to delete", [("Tick all safe junk", "primary", self.tick_safe.emit),
                                      ("See junk", None, lambda: self.go.emit(1))])
         self.choice_card, self.choice_num, self.choice_text = self._summary(
-            CHOICE, "Worth a look", [("Large files", None, lambda: self.go.emit(3)),
-                                     ("Duplicates", None, lambda: self.go.emit(4))])
+            CHOICE, "Worth a look", [("Leftovers", None, lambda: self.go.emit(2)),
+                                     ("Large files", None, lambda: self.go.emit(4)),
+                                     ("Duplicates", None, lambda: self.go.emit(5))])
         rl.addWidget(self.safe_card, 0, 0)
         rl.addWidget(self.choice_card, 0, 1)
         self.where = card()
@@ -153,7 +154,7 @@ class OverviewPage(Page):
         self.where_rows.setHorizontalSpacing(14)
         self.where_rows.setVerticalSpacing(4)
         wl.addLayout(self.where_rows)
-        wl.addWidget(hbox(button("Open the Space map", None, lambda: self.go.emit(2)), None))
+        wl.addWidget(hbox(button("Open the Space map", None, lambda: self.go.emit(3)), None))
         rl.addWidget(self.where, 1, 0, 1, 2)
         self.footnote = label("", "faint")
         rl.addWidget(self.footnote, 2, 0, 1, 2)
@@ -255,9 +256,10 @@ class OverviewPage(Page):
         large = [x for x in (state.scan.large if state.scan else [])
                  if knowledge.explain(x[1], False).safety == CHOICE]
         extra = sum(g.extra for g in state.dups)
-        self.choice_num.setText(theme.size_text(sum(x[0] for x in large) + extra))
-        self.choice_text.setText("%d large files and %d sets of duplicate copies. These are your own files, so "
-                                 "only you can decide." % (len(large), len(state.dups)))
+        left = [e for g in state.leftovers for e in g.entries if e.info.safety == CHOICE]
+        self.choice_num.setText(theme.size_text(sum(x[0] for x in large) + extra + sum(e.size for e in left)))
+        self.choice_text.setText("%d leftover folders of removed programs, %d large files and %d sets of duplicate "
+                                 "copies. Only you can decide on these." % (len(left), len(large), len(state.dups)))
         self._where(state)
         sc = state.scan
         if sc:
@@ -341,6 +343,67 @@ class JunkPage(Page):
 
     def tick_safe(self):
         for item, e in self.tree.entries():
+            if e.info.safety == SAFE and not e.locked:
+                self.selection.add(e)
+
+    def untick(self):
+        for _, e in self.tree.entries():
+            self.selection.remove(e.key)
+
+
+# ---------------------------------------------------------------- Leftovers
+class LeftoversPage(Page):
+    admin_requested = Signal()
+
+    def __init__(self, selection):
+        super().__init__("Leftovers", "What uninstalled programs left behind: their folders, empty folders and "
+                                      "shortcuts that lead nowhere. Folders are amber because Tidy can't be "
+                                      "completely sure; click one to see why it looks left over.")
+        self.selection = selection
+        self.tree = CheckTree(selection, ["Item", "Size", "Safety", "Unused for", "Where"])
+        for col, w in enumerate((300, 90, 150, 110)):
+            self.tree.setColumnWidth(col, w)
+        self.admin_note = card()
+        al = QVBoxLayout(self.admin_note)
+        al.setContentsMargins(14, 10, 14, 10)
+        self.admin_text = label("", "muted")
+        row = QHBoxLayout()
+        row.addWidget(self.admin_text, 1)
+        row.addWidget(button("Restart as administrator", None, self.admin_requested.emit))
+        al.addLayout(row)
+        self.lay.addWidget(hbox(button("Tick empty folders and broken shortcuts", "primary", self.tick_safe),
+                                button("Untick all", None, self.untick), None))
+        self.lay.addWidget(self.admin_note)
+        self.lay.addWidget(self.tree, 1)
+        self.admin_note.hide()
+        self.empty = label("Run a scan from the Overview page to look for leftovers.", "muted")
+        self.lay.addWidget(self.empty)
+
+    def load(self, state):
+        self.tree.clear()
+        locked = 0
+        for g in state.leftovers:
+            top = self.tree.add_group(g.title, g.what, g.safety, theme.size_text(g.size) if g.size else "",
+                                      "")
+            top.setText(4, "%d item%s" % (len(g.entries), "" if len(g.entries) == 1 else "s"))
+            for e in g.entries:
+                unused = e.note.split("Last changed ")[-1].rstrip(".").replace(" ago", "") if e.note else ""
+                where = e.locked + " - restart Tidy as administrator" if e.locked else os.path.dirname(e.path)
+                self.tree.add_entry(top, e, [e.name if g.id != "shortcuts" else e.info.title,
+                                             theme.size_text(e.size) if e.size else "", "", unused, where])
+                locked += bool(e.locked)
+            self.tree.finish_group(top)
+            top.setExpanded(g.id == "leftovers")
+        self.tree.refresh_checks()
+        self.empty.setVisible(not state.leftovers)
+        self.empty.setText("No leftovers found." if state.scan is not None else
+                           "Run a scan from the Overview page to look for leftovers.")
+        self.admin_note.setVisible(bool(locked) and not winapi.is_admin())
+        self.admin_text.setText("%d leftover%s in Program Files or ProgramData can only be removed with "
+                                "administrator rights." % (locked, "" if locked == 1 else "s"))
+
+    def tick_safe(self):
+        for _, e in self.tree.entries():
             if e.info.safety == SAFE and not e.locked:
                 self.selection.add(e)
 
@@ -527,6 +590,7 @@ class DupTree(CheckTree):
 
 # ---------------------------------------------------------------- Settings
 class SettingsPage(Page):
+    check_requested = Signal()
     theme_changed = Signal(str)
     mode_changed = Signal(str)
     tray_changed = Signal()
@@ -567,6 +631,15 @@ class SettingsPage(Page):
         form.addRow("Suggest downloaded installers older than", self.installers)
         form.addRow("Large files start at", self.large)
         form.addRow("", label("These apply to the next scan.", "faint"))
+        form.addRow(label("Updates", "h2"))
+        from ..version import VERSION
+        self.auto_update = QCheckBox("Check for a new version when Tidy starts")
+        self.auto_update.setChecked(bool(settings.get("auto_update")))
+        self.auto_update.toggled.connect(lambda on: self.s.set("auto_update", on))
+        self.update_label = label("You have version %s." % VERSION, "muted")
+        self.check_btn = button("Check for updates", None, self._check)
+        form.addRow("", self.auto_update)
+        form.addRow("", hbox(self.check_btn, 10, self.update_label, None))
         form.addRow(label("History", "h2"))
         from ..settings import log_dir
         form.addRow("", hbox(button("Open the deletion log", None, lambda: os.startfile(log_dir())), None))
@@ -574,6 +647,13 @@ class SettingsPage(Page):
                               "check later.", "faint"))
         self.lay.addWidget(box)
         self.lay.addStretch(1)
+
+    def _check(self):
+        self.update_label.setText("Checking...")
+        self.check_requested.emit()
+
+    def update_status(self, text):
+        self.update_label.setText(text)
 
     def _spin(self, key, lo, hi, suffix):
         sp = QSpinBox()

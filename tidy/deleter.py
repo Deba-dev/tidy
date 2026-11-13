@@ -46,9 +46,14 @@ def refuse(entry):
     if not os.path.lexists(path):
         return "Already gone."
     info = knowledge.explain(path, os.path.isdir(path))
-    if info.safety == KEEP:
+    if entry.origin == "leftover":
+        from . import leftovers             # leftovers live in program places on purpose: check them their own way
+        why = leftovers.verify(path)
+        if why:
+            return why
+    elif info.safety == KEEP:
         return "Tidy keeps this: %s." % info.title
-    if entry.kind == "path" and info.keep_folder and os.path.isdir(path):
+    if entry.kind == "path" and info.keep_folder and os.path.isdir(path) and entry.origin != "leftover":
         return "This folder must stay; only its contents can go."
     for own in _own_dirs():
         if p == own or own.startswith(p + "\\") or p.startswith(own + "\\"):

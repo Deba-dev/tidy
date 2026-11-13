@@ -5,7 +5,7 @@ import time
 
 from PySide6.QtCore import QThread, Signal
 
-from .. import deleter, duplicates, junk, knowledge, scanner, winapi
+from .. import deleter, duplicates, junk, knowledge, leftovers, scanner, winapi
 
 log = logging.getLogger("tidy")
 
@@ -16,6 +16,7 @@ class State:
         self.junk = []              # [junk.Group]
         self.scan = None            # scanner.ScanResult
         self.dups = []              # [duplicates.DupGroup]
+        self.leftovers = []         # [junk.Group] from leftovers.find()
         self.drives = []            # [winapi.Drive] at scan time
         self.finished_at = 0.0
 
@@ -38,6 +39,9 @@ class ScanWorker(QThread):
             self.progress.emit("Looking for junk", "", -1)
             state.junk = junk.find(int(self.s.get("temp_hours")), int(self.s.get("installer_days")), cancelled,
                                    lambda p: self.progress.emit("Looking for junk", p, -1))
+            if not self.stop:
+                state.leftovers = leftovers.find(cancelled, lambda p: self.progress.emit(
+                    "Looking for leftovers of removed programs", p, -1))
             if not self.stop:
                 def scan_progress(files, size, path):
                     self.progress.emit("Mapping your drives", "%s files  ·  %s" % (format(files, ","), path),
@@ -104,6 +108,9 @@ def apply_report(state, report, sizes):
     for g in state.junk:
         g.entries = [e for e in g.entries if e.key not in gone and e.size > 0]
     state.junk = [g for g in state.junk if g.entries]
+    for g in state.leftovers:
+        g.entries = [e for e in g.entries if e.key not in gone and os.path.lexists(e.path)]
+    state.leftovers = [g for g in state.leftovers if g.entries]
     if not report.permanent:                    # the Recycle Bin grew
         size, count = winapi.recycle_bin_size()
         bin_group = next((g for g in state.junk if g.id == "recyclebin"), None)

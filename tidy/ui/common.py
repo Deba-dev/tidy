@@ -55,7 +55,7 @@ class Selection(QObject):
 # ---------------------------------------------------------------- painting
 def pill(p, rect, safety, dim=False, text=None):
     """A rounded safety label, e.g. a green "Safe to delete"."""
-    text = text or LABEL[safety]
+    text = text or LABEL.get(safety, "")
     f = QFont(p.font())
     f.setPointSizeF(8.6)
     f.setWeight(QFont.Weight.DemiBold)
@@ -379,15 +379,15 @@ class DetailPanel(QFrame):
         self.uri = ""
         if item is None:
             return
-        if isinstance(item, tuple):             # a group header
-            title, what, safety = item
+        if isinstance(item, tuple):             # a group header, or a running app (with its own advice)
+            title, what, safety = item[:3]
             self.title.setText(title)
             self.pill.set(safety)
             self.what.setText(what)
             self.advice.setText({"safe": "Everything in this group is safe to delete. Tick the group to select it "
                                          "all, or open it to pick.",
                                  "choice": "Look at each item: only you know if you still need it.",
-                                 "keep": "Tidy keeps these."}.get(safety, ""))
+                                 "keep": "Tidy keeps these."}.get(safety, "") if len(item) < 4 else item[3])
             self.what_h.setText("What is it?")
             for w in (self.facts, self.path, self.action, self.reveal):
                 w.hide()

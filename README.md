@@ -25,6 +25,30 @@ program, or Storage settings for the old Windows folder).
 4. **Delete**: choose **Move to the Recycle Bin** (can be undone) or **Delete permanently** (frees space now).
    Amber items need an extra "they are mine" tick.
 
+## Leftovers and Memory
+
+- **Leftovers** finds folders that uninstalled programs left in Program Files, ProgramData and AppData (no
+  installed program matches, nothing running uses it, unchanged for 3+ months), empty folders, and Start menu /
+  desktop shortcuts to programs that are gone. Leftover folders are always amber; the deleter runs
+  `leftovers.verify()` again right before deleting each one.
+- **Memory** shows RAM use and the apps behind it, labelled Safe to close / Your choice / Keep running. It closes
+  ticked apps politely (WM_CLOSE, force only when asked), can ask apps to hand back unused memory
+  (EmptyWorkingSet), and as administrator can clear the standby cache.
+
+## Speed up
+
+Game Boost, a checkup with one-click fixes (Game Mode, Xbox background recording, power mode, mouse acceleration,
+graphics drivers, restart, free space, effects), startup apps (StartupApproved, like Task Manager) and the graphics
+card per game (UserGpuPreferences). `tidy/optimize.py` saves every old value in `settings["changes"]` before writing,
+so Undo / Undo all put back exactly what was there. `WONT_DO` lists the "boosts" Tidy refuses, with reasons.
+
+## Updates
+
+`tidy/updater.py` (same design as Clip Studio and ChatDoom) reads the repo's releases, takes the newest
+`Tidy-Setup.exe` newer than `tidy/version.py`, accepts only files from `github.com/Deba-dev/tidy/releases/download/`,
+checks GitHub's sha256 digest, runs the installer silently and the installer starts Tidy again. Old downloaded
+installers are removed on the next start.
+
 ## Safety rules (in code, not only in the UI)
 
 - `tidy/deleter.py` re-checks every item before deleting, whatever page it came from: no drive roots, nothing

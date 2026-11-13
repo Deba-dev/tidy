@@ -71,7 +71,7 @@ def test_pages_load_and_delete(window, tmp_path, monkeypatch):
     assert window.large.tree.topLevelItemCount() == 2            # two 2 MB files over the 1 MB line
     if knowledge.zone(str(root)) == "user":
         assert window.dupes.tree.topLevelItemCount() == 1
-    for i in range(6):
+    for i in range(window.stack.count()):
         window.nav.setCurrentRow(i)
         QApplication.processEvents()
 

@@ -1,7 +1,8 @@
 """The main window: sidebar, pages, the "About this item" panel and the selection bar at the bottom."""
 import logging
+import os
 
-from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QMainWindow,
                                QMessageBox, QStackedWidget, QStyledItemDelegate, QVBoxLayout, QWidget)
 
@@ -11,14 +12,21 @@ from ..version import NAME, VERSION
 from . import theme
 from .common import DetailPanel, Selection, button, hbox, label
 from .dialogs import ProgressDialog, ResultDialog, ReviewDialog
+from ..updater import Updater
 from .icon import icon
-from .pages import DupesPage, JunkPage, LargePage, OverviewPage, SettingsPage, SpaceMapPage
+from .memory_page import MemoryPage
+from .speed_page import SpeedPage
+from .pages import DupesPage, JunkPage, LargePage, LeftoversPage, OverviewPage, SettingsPage, SpaceMapPage
 from .window_modes import WindowModes
 from .workers import DeleteWorker, ScanWorker, State, apply_report
 
 log = logging.getLogger("tidy")
 BADGE = Qt.ItemDataRole.UserRole + 10
-PAGES = ("Overview", "Junk", "Space map", "Large files", "Duplicates", "Settings")
+PAGES = ("Overview", "Junk", "Leftovers", "Space map", "Large files", "Duplicates", "Memory", "Speed up",
+         "Settings")
+FILE_PAGES = (1, 2, 3, 4, 5)
+MEMORY = 6
+SPEED = 7
 
 
 class NavDelegate(QStyledItemDelegate):
@@ -64,11 +72,15 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.overview = OverviewPage(settings)
         self.junk = JunkPage(self.selection)
+        self.leftovers = LeftoversPage(self.selection)
+        self.memory = MemoryPage()
+        self.speed = SpeedPage(settings)
         self.space = SpaceMapPage(self.selection)
         self.large = LargePage(self.selection, settings)
         self.dupes = DupesPage(self.selection)
         self.settings_page = SettingsPage(settings)
-        for page in (self.overview, self.junk, self.space, self.large, self.dupes, self.settings_page):
+        for page in (self.overview, self.junk, self.leftovers, self.space, self.large, self.dupes, self.memory,
+                     self.speed, self.settings_page):
             self.stack.addWidget(page)
         self.detail = DetailPanel()
         detail_wrap = QWidget()
@@ -78,18 +90,22 @@ class MainWindow(QMainWindow):
         self.detail_wrap = detail_wrap
         middle.addWidget(self.stack, 1)
         middle.addWidget(detail_wrap)
+        right.addWidget(self._update_banner())
         right.addLayout(middle, 1)
         right.addWidget(self._selection_bar())
         outer.addLayout(right, 1)
         self.setCentralWidget(root)
 
-        for page in (self.junk, self.space, self.large, self.dupes):
+        for page in (self.junk, self.leftovers, self.space, self.large, self.dupes):
             page.tree.current_changed.connect(self.detail.show_item)
+        self.memory.current_changed.connect(self.detail.show_item)
         self.overview.scan_requested.connect(self.start_scan)
         self.overview.cancel_requested.connect(self.cancel_scan)
         self.overview.go.connect(self.nav.setCurrentRow)
         self.overview.tick_safe.connect(self.tick_safe)
         self.junk.admin_requested.connect(self.restart_as_admin)
+        self.leftovers.admin_requested.connect(self.restart_as_admin)
+        self.speed.go.connect(self.nav.setCurrentRow)
         self.settings_page.theme_changed.connect(self.set_theme)
         self.settings_page.mode_changed.connect(lambda m: self.modes.set_mode(m))
         self.settings_page.tray_changed.connect(lambda: self.modes.sync_tray())
@@ -98,6 +114,21 @@ class MainWindow(QMainWindow):
         self.modes = WindowModes(self, settings, NAME, busy=self.busy)
         self.nav.setCurrentRow(0)
         self.update_selection_bar()
+
+        self.updater = Updater(settings)
+        self.update_info = None
+        self.updater.found.connect(self.update_found)
+        self.updater.nothing.connect(lambda: self.settings_page.update_status("You have the latest version, "
+                                                                              + VERSION + "."))
+        self.updater.failed.connect(self.update_failed)
+        self.updater.progress.connect(lambda v: self.banner_text.setText("Downloading the update... %d%%" % (v * 100)))
+        self.updater.ready.connect(self.update_ready)
+        self.settings_page.check_requested.connect(lambda: self.updater.check(manual=True))
+        problem = self.updater.after_start()
+        if problem:
+            QTimer.singleShot(1500, lambda: QMessageBox.information(self, NAME, problem))
+        if settings.get("auto_update") and os.environ.get("QT_QPA_PLATFORM") != "offscreen":   # not in tests
+            QTimer.singleShot(4000, self.updater.check)
 
     # ---------------------------------------------------------------- layout
     def _sidebar(self):
@@ -136,9 +167,68 @@ class MainWindow(QMainWindow):
         self.admin_btn.setVisible(not admin)
         return side
 
+    def _update_banner(self):
+        bar = QFrame()
+        bar.setObjectName("card")
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(18, 10, 14, 10)
+        self.banner_text = label("", wrap=False)
+        self.banner_go = button("Update now", "primary", self.update_now)
+        self.banner_later = button("Later", None, lambda: self.banner.hide())
+        lay.addWidget(self.banner_text, 1)
+        lay.addWidget(self.banner_later)
+        lay.addWidget(self.banner_go)
+        wrap = QWidget()
+        wl = QVBoxLayout(wrap)
+        wl.setContentsMargins(28, 14, 16, 0)
+        wl.addWidget(bar)
+        wrap.hide()
+        self.banner = wrap
+        return wrap
+
+    def update_found(self, info):
+        self.update_info = info
+        text = "Tidy %s is ready to install." % info["version"]
+        if info.get("notes"):
+            text += "  " + info["notes"]
+        self.banner_text.setText(text)
+        self.banner_text.setToolTip(text)
+        self.banner_go.setEnabled(True)
+        self.banner_later.show()
+        self.banner.show()
+        self.settings_page.update_status("Version %s is available (you have %s)." % (info["version"], VERSION))
+
+    def update_failed(self, why):
+        self.settings_page.update_status(why)
+        if self.banner.isVisible():
+            self.banner_text.setText(why)
+            self.banner_go.setEnabled(True)
+
+    def update_now(self):
+        info = self.update_info
+        if not info:
+            return
+        if not self.updater.frozen:             # running from source: nothing to replace, show the page
+            winapi.open_uri(info.get("page") or "https://github.com/Deba-dev/tidy/releases")
+            return
+        if self.busy():
+            QMessageBox.information(self, NAME, "Wait until Tidy has finished, then update.")
+            return
+        self.banner_go.setEnabled(False)
+        self.banner_later.hide()
+        self.banner_text.setText("Downloading the update...")
+        self.updater.install(info)
+
+    def update_ready(self, path):
+        self.banner_text.setText("Installing the update. Tidy will open again in a moment.")
+        self.updater.launch(path)
+        self.modes.quitting = True
+        QTimer.singleShot(400, QApplication.quit)
+
     def _selection_bar(self):
         bar = QFrame()
         bar.setObjectName("selbar")
+        self.selbar = bar
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(28, 12, 20, 12)
         self.sel_text = label("", "h2", wrap=False)
@@ -156,10 +246,16 @@ class MainWindow(QMainWindow):
 
     def show_page(self, i):
         self.stack.setCurrentIndex(i)
-        self.detail_wrap.setVisible(i in (1, 2, 3, 4))
+        self.detail_wrap.setVisible(i in FILE_PAGES or i == MEMORY)
+        self.selbar.setVisible(i not in (MEMORY, SPEED))
         page = self.stack.currentWidget()
         tree = getattr(page, "tree", None)
-        self.detail.show_item(tree.detail_of(tree.currentItem()) if tree is not None else None)
+        if i == MEMORY:
+            self.detail.show_item(page._detail(tree.currentItem()))
+        elif tree is None:
+            self.detail.show_item(None)
+        else:
+            self.detail.show_item(tree.detail_of(tree.currentItem()) if tree is not None else None)
 
     def update_selection_bar(self):
         entries = self.selection.entries()
@@ -183,8 +279,8 @@ class MainWindow(QMainWindow):
     def update_badges(self):
         st = self.state
         junk_total = sum(e.size for g in st.junk for e in g.entries if not e.locked)
-        badges = {1: junk_total, 3: sum(x[0] for x in st.scan.large) if st.scan else 0,
-                  4: sum(g.extra for g in st.dups)}
+        badges = {1: junk_total, 2: sum(g.size for g in st.leftovers),
+                  4: sum(x[0] for x in st.scan.large) if st.scan else 0, 5: sum(g.extra for g in st.dups)}
         for i, size in badges.items():
             self.nav.item(i).setData(BADGE, theme.size_text(size) if size else "")
         self.nav.viewport().update()
@@ -211,7 +307,7 @@ class MainWindow(QMainWindow):
         self.reload()
 
     def reload(self):
-        for page in (self.overview, self.junk, self.space, self.large, self.dupes):
+        for page in (self.overview, self.junk, self.leftovers, self.space, self.large, self.dupes):
             page.load(self.state)
         self.update_badges()
         self.update_selection_bar()
@@ -284,6 +380,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.modes.close_event(event):
             return
+        self.memory.stop()
+        self.speed.stop()
         for w in (self.scan_worker, self.delete_worker):
             if w is not None:
                 w.stop = True

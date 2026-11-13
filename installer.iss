@@ -42,6 +42,8 @@ Name: "{autodesktop}\Tidy"; Filename: "{app}\Tidy.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\Tidy.exe"; Description: "Start Tidy"; Flags: nowait postinstall skipifsilent
+; after an in-app update (a silent install) Tidy opens again by itself
+Filename: "{app}\Tidy.exe"; Flags: nowait; Check: WizardSilent
 
 [Code]
 // Waits for the running app to close before any file is touched.

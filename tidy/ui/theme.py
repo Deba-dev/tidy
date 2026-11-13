@@ -14,6 +14,7 @@ LIGHT = {
     "danger": "#c4321f", "danger_hover": "#a82a19",
     SAFE: "#14804a", SAFE + "_bg": "#e2f4e9", CHOICE: "#9a5a00", CHOICE + "_bg": "#fcefd6",
     KEEP: "#b42318", KEEP + "_bg": "#fde6e3", "bar": "#c9d2e0", "bar_bg": "#edf0f4",
+    "info": "#4d5866", "info_bg": "#e9ecf1",
 }
 DARK = {
     "bg": "#111317", "panel": "#181b20", "side": "#14161a", "text": "#e8ebf0", "muted": "#a1a9b4",
@@ -22,6 +23,7 @@ DARK = {
     "danger": "#ff6b5e", "danger_hover": "#ff8478",
     SAFE: "#4fd18b", SAFE + "_bg": "#13301f", CHOICE: "#f2b552", CHOICE + "_bg": "#35280f",
     KEEP: "#ff7b72", KEEP + "_bg": "#3a1715", "bar": "#3a4558", "bar_bg": "#20242b",
+    "info": "#aab3c0", "info_bg": "#252a31",
 }
 
 current = dict(LIGHT)

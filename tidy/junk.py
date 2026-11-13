@@ -23,6 +23,7 @@ class Entry:
     older_than: float = None        # only files last changed before this time (temp folders)
     note: str = ""                  # extra line, e.g. "Copy 2 of 3"
     locked: str = ""                # why it can't be ticked right now ("Needs administrator")
+    origin: str = ""                # "leftover": checked by leftovers.verify() instead of the usual Keep rule
 
     @property
     def key(self):
