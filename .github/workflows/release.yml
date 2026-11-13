@@ -1,0 +1,65 @@
+name: Release Tidy
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The tag must match the app version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: python
+        run: |
+          import os, re, pathlib
+          version = re.search(r'VERSION = "([^"]+)"', pathlib.Path("tidy/version.py").read_text()).group(1)
+          if os.environ["GITHUB_REF_NAME"] != "v" + version:
+              raise SystemExit("Tag %s does not match app version %s" % (os.environ["GITHUB_REF_NAME"], version))
+      - run: pip install -r requirements.txt pyinstaller==6.22.3 pytest
+      - name: Run the tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONIOENCODING: utf-8
+        run: python -m pytest -q tests
+      - name: Make the icon
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tools/make_icon.py
+      - name: Build the app
+        run: pyinstaller --noconfirm --windowed --noupx --name Tidy --icon assets\icon.ico --exclude-module tkinter main.py
+      - name: Start the built app once
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:TIDY_DATA = "$env:RUNNER_TEMP\selftest"
+          $app = Start-Process dist\Tidy\Tidy.exe -ArgumentList "--selftest" -PassThru
+          $null = $app.Handle
+          if (-not $app.WaitForExit(120000)) { $app.Kill(); throw "The app did not finish starting" }
+          if ($app.ExitCode -ne 0) { throw "The app failed to start ($($app.ExitCode))" }
+      - run: choco install innosetup -y --no-progress
+      - name: Make the installer
+        shell: pwsh
+        run: |
+          $iscc = (Resolve-Path "$env:SystemDrive\Program Files*\Inno Setup *\ISCC.exe" | Select-Object -First 1).Path
+          if (-not $iscc) { throw "Inno Setup was not found" }
+          $version = ([regex]'VERSION = "([^"]+)"').Match((Get-Content tidy\version.py -Raw)).Groups[1].Value
+          & $iscc "/DAppVersion=$version" installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "The installer could not be made" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tidy-Setup
+          path: installer/Tidy-Setup.exe
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: Tidy ${{ github.ref_name }}
+          prerelease: true
+          body_path: RELEASE_NOTES.md
+          files: installer/Tidy-Setup.exe
